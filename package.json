@@ -1,0 +1,24 @@
+{
+    "name": "sls-budgeting-api",
+    "version": "1.0.0",
+    "description": "sls-budgeting-api",
+    "type": "module",
+    "dependencies": {
+        "@aws-sdk/client-cognito-identity-provider": "^3.470.0",
+        "@aws-sdk/client-dynamodb": "^3.470.0",
+        "@aws-sdk/util-dynamodb": "^3.470.0",
+        "jsonwebtoken": "^8.5.1",
+        "middy": "^0.27.0",
+        "source-map-support": "^0.5.11",
+        "uuid": "^3.3.2",
+        "winston": "^3.2.1"
+    },
+    "devDependencies": {
+        "aws-sdk": "^2.1058.0",
+        "serverless-iam-roles-per-function": "^3.2.0-e97ab49",
+        "serverless-reqvalidator-plugin": "^1.0.3",
+        "serverless-v2-aws-documentation": "^2.0.4"
+    },
+    "author": "Tobenna Nwokike",
+    "license": "MIT"
+}

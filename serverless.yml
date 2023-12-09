@@ -1,0 +1,206 @@
+service: sls-budgeting-api
+frameworkVersion: '3'
+
+plugins:
+  - serverless-iam-roles-per-function
+  - serverless-reqvalidator-plugin
+  - serverless-v2-aws-documentation
+
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  environment:
+    TRANSACTIONS_TABLE: Transactions-Budget-${self:provider.stage}
+    SUMMARY_TABLE: Summary-Budget-${self:provider.stage}
+    TRANSACTIONS_BY_USER_INDEX: TransactionsByUserIndex
+    USER_POOL_ID: !Ref UserPool
+    CLIENT_ID: !Ref UserClient
+    REGION: !Ref AWS::Region
+
+custom:
+  documentation:
+    api:
+      info:
+        version: v1.0.0
+        title: Budget Application
+        description: Serverless Budget application
+    models:
+      - name: SignupRequest
+        contentType: application/json
+        schema: ${file(src/validators/signup.json)}
+      - name: LoginRequest
+        contentType: application/json
+        schema: ${file(src/validators/login.json)}
+      - name: CreateRequest
+        contentType: application/json
+        schema: ${file(src/validators/create.json)}
+
+
+
+functions:
+  signup:
+    handler: src/lambda/signup.handler
+    events:
+      - http:
+          path: signup
+          method: post
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new User
+            description: Create a new User
+            requestModels:
+              'application/json': SignupRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - cognito-idp:AdminInitiateAuth
+          - cognito-idp:AdminCreateUser
+          - cognito-idp:AdminSetUserPassword
+        Resource: "*"
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.SUMMARY_TABLE}
+
+  login:
+    handler: src/lambda/login.handler
+    events:
+      - http:
+          path: login
+          method: post
+          cors: true
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Login a new user
+            description: Login a new user
+            requestModels:
+              'application/json': LoginRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - cognito-idp:AdminInitiateAuth
+          - cognito-idp:AdminCreateUser
+          - cognito-idp:AdminSetUserPassword
+        Resource: "*"
+
+  create:
+    handler: src/lambda/create.handler
+    events:
+      - http:
+          method: post
+          path: transactions
+          cors: true
+          authorizer:
+            name: PrivateAuthorizer
+            type: COGNITO_USER_POOLS
+            arn:
+              Fn::GetAtt:
+                - UserPool
+                - Arn
+            claims:
+              - email
+          reqValidatorName: RequestBodyValidator
+          documentation:
+            summary: Create a new Transaction
+            description: Create a new Transaction
+            requestModels:
+              'application/json': CreateRequest
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.TRANSACTIONS_TABLE}
+      - Effect: Allow
+        Action:
+          - dynamodb:UpdateItem
+          - dynamodb:GetItem
+        Resource: arn:aws:dynamodb:${self:provider.region}:*:table/${self:provider.environment.SUMMARY_TABLE}
+
+resources:
+  Resources:
+    # API Gateway
+    GatewayResponseDefault4XX:
+      Type: AWS::ApiGateway::GatewayResponse
+      Properties:
+        ResponseParameters:
+          gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+          gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+          gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST'"
+        ResponseType: DEFAULT_4XX
+        RestApiId:
+          Ref: ApiGatewayRestApi
+
+    # DynamoDB
+    TransactionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: transactionId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: transactionId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.TRANSACTIONS_TABLE}
+        GlobalSecondaryIndexes:
+          - IndexName: ${self:provider.environment.TRANSACTIONS_BY_USER_INDEX}
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+
+    SummaryTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:provider.environment.SUMMARY_TABLE}
+
+    #Request Validator
+    RequestBodyValidator:
+      Type: AWS::ApiGateway::RequestValidator
+      Properties:
+        Name: 'request-body-validator'
+        RestApiId:
+          Ref: ApiGatewayRestApi
+        ValidateRequestBody: true
+        ValidateRequestParameters: false
+
+    #Cognito
+    UserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: budget-app-pool-${self:provider.stage}
+        Schema:
+          - Name: email
+            Required: true
+            Mutable: true
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 6
+        AutoVerifiedAttributes: ["email"]
+
+    UserClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: budget-app-pool-ui-${self:provider.stage}
+        GenerateSecret: false
+        UserPoolId: !Ref UserPool
+        AccessTokenValidity: 5
+        IdTokenValidity: 5
+        ExplicitAuthFlows:
+          - "ADMIN_NO_SRP_AUTH"
